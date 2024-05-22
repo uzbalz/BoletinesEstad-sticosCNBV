@@ -1,0 +1,1224 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+---
+title: "Reporte Estadístico de la Banca Múltiple"
+output: html_document
+always_allow_html: yes
+date: '\today'
+---
+
+```{r, echo=FALSE}
+pacman::p_load(haven,
+               ggplot2,
+               dplyr,
+               ggpubr,
+               DT,
+               rmarkdown,
+               reshape2,
+               paletteer,
+               tidyr,
+               webshot,
+               plotly,
+               RColorBrewer)
+
+#install.packages("webshot")
+#webshot::install_phantomjs()
+
+rm(list = ls())
+
+bank_data <- read_dta("//Statadgef/darmacro/Data/Bank Data/Data/Stata/[13]Indicadores_Bancarios_Agr.dta")
+inpc_data <- read_dta("//Statadgef/darmacro/Data/INPC/Data/Stata/[1-DC] INPC.dta")
+bnames_data <- read_dta("//Statadgef/darmacro/Osvaldo/Otros_DTA/Nombres de bancos.dta")
+
+stata_date_number <- max(bank_data$monthly_date)
+year <- floor(stata_date_number / 12) + 1960 # Stata's base year is 1960
+month <- stata_date_number %% 12 + 1
+
+#Converting to real data
+bank_data <- bank_data %>% 
+     mutate(INPC = inpc, 
+            nominal_cre_cct = cre_cct) %>%
+     mutate(across(
+         starts_with("cre_"),
+         ~ ./INPC * 100
+       )) %>% 
+     mutate(cre_cct_nominal = nominal_cre_cct) %>% 
+     left_join(bnames_data, by = c("bank_id")) %>%
+          mutate(bank_str = label) %>% 
+     mutate(monthly_date = paste0(floor(monthly_date / 12) + 1960, "m", monthly_date %% 12 + 1, sep = ""))
+
+
+# Create the Stata date string
+stata_date_string <- paste(year, "m", month, sep = "")
+
+```
+
+
+
+### Fecha de actualización: `r paste(stata_date_string)`
+
+# Dinámica de los saldos de crédito
+```{r, echo=FALSE}
+#Sólo Banca Múltiple
+system_credit <- bank_data %>%
+  filter(bank_id == 0) %>% 
+     mutate(
+          zcre_cct = (cre_cct - mean(cre_cct, na.rm = T)) / sd(cre_cct, na.rm = T),
+          zcre_cce = (cre_cce - mean(cre_cce, na.rm = T)) / sd(cre_cce, na.rm = T),
+          zcre_ccct = (cre_ccct - mean(cre_ccct, na.rm = T)) / sd(cre_ccct, na.rm = T),
+          zcre_ccv = (cre_ccv - mean(cre_ccv, na.rm = T)) / sd(cre_ccv, na.rm = T),
+          zcre_ccctc = (cre_ccctc - mean(cre_ccctc, na.rm = T)) / sd(cre_ccctc, na.rm = T)
+            )
+
+main_first_vals <- list()
+
+val_cct_in_nominals <- round(bank_data$nominal_cre_cct[bank_data$time_monthly == stata_date_number & bank_data$bank_id == 0]/1000, 1)
+val_cct <- round(bank_data$cre_cct[bank_data$time_monthly == stata_date_number & bank_data$bank_id == 0]/1000, 1)
+val12_cct <- round(bank_data$cre_cct[bank_data$time_monthly == stata_date_number - 12 & bank_data$bank_id == 0]/1000, 1)
+val1_cct <- round(bank_data$cre_cct[bank_data$time_monthly == stata_date_number - 1 & bank_data$bank_id == 0]/1000, 1)
+d1_cct = round((val_cct / val1_cct - 1) * 100 , 2)
+d12_cct = round((val_cct / val12_cct - 1) * 100 , 2)
+val_cce <- round(bank_data$cre_cce[bank_data$time_monthly == stata_date_number & bank_data$bank_id == 0]/1000, 1)
+sh_cce_cct = round(val_cce / val_cct * 100, 2)
+```
+
+El total del crédito de la Banca Múltiple, con corte al `r paste(stata_date_string)` **cerró en `r paste(format(val_cct, big.mark = ",", decimal.mark = "."))` miles de millones de pesos** reales (`r paste(format(val_cct_in_nominals, big.mark = ",", decimal.mark = "."))` nominales), Esto representó una variación de **`r paste(d12_cct)`% anual** y de **`r paste(d1_cct)`% mensual** en términos reales.
+
+El crédito a empresas **representa el `r paste(sh_cce_cct)`%** del total de la cartera, siendo así la cartera de crédito más importante.
+
+## Dinámica de saldos seales {.tabset}
+
+### Gráfica de saldos
+
+```{r, echo=FALSE, fig.width=10}
+#Sólo Banca Múltiple
+system_credit <- bank_data %>%
+  filter(bank_id == 0) %>% 
+     mutate(
+          sdo_total = cre_cct/1000, sdo_empresas = cre_cce/1000, sdo_consumo = cre_ccct/1000,  #Converting to mmdp
+               sdo_viv = cre_ccv/1000, sdo_tarjetas = cre_ccctc/1000, 
+               periodo = (floor(time_monthly / 12) + 1960) * 100 + time_monthly %% 12 + 1,
+          zcre_cct = (cre_cct - mean(cre_cct, na.rm = T)) / sd(cre_cct, na.rm = T),
+          zcre_cce = (cre_cce - mean(cre_cce, na.rm = T)) / sd(cre_cce, na.rm = T),
+          zcre_ccct = (cre_ccct - mean(cre_ccct, na.rm = T)) / sd(cre_ccct, na.rm = T),
+          zcre_ccv = (cre_ccv - mean(cre_ccv, na.rm = T)) / sd(cre_ccv, na.rm = T),
+          zcre_ccctc = (cre_ccctc - mean(cre_ccctc, na.rm = T)) / sd(cre_ccctc, na.rm = T)
+            ) %>% 
+     mutate_if(is.numeric, ~round(., 3)) 
+
+#Defining quantiles for time-var
+plot_breaks <- floor(quantile(system_credit$time_monthly))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+
+# Create a ggplot visualization
+sdos_reales <- plot_ly(system_credit, 
+                      x = ~ time_monthly, y = ~ zcre_cct, name = "Sistema", type = 'scatter', mode = 'lines', line = list(width = 3, color = "#0B7DDB"),
+                      text = ~paste("Periodo:", periodo, "\nSaldo real", sdo_total), hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zcre_cce, mode = 'lines', line = list(width = 2, color = "#1D0BDB"),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_empresas), name = "Empresas", hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zcre_ccv, mode = 'lines', line = list(width = 2, color = "#0B3CDB"),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_viv), name = "Vivienda", hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zcre_ccct, mode = 'lines', line = list(width = 2, color = "#0BBFDB"),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_consumo), name = "Consumo", hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zcre_ccctc, mode = 'lines', line = list(width = 1, color = "#8FA1DC"),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_tarjetas), name = "Tarjetas de crédito", hoverinfo = 'text+name') %>%
+     layout(title = "Dinámica de saldos reales. \nDatos normalizados para proceso de visualización",
+            xaxis = list(title = "Fecha",
+                         tickmode = "array",
+                         tickvals = plot_breaks,
+                         ticktext = plot_lbreaks
+            ),
+            yaxis = list(title = "Saldos reales normalizados")
+     )
+
+
+sdos_reales
+
+
+
+ 
+```
+### Otros saldos
+
+```{r, echo=FALSE, fig.width=10}
+#Sólo Banca Múltiple
+system_credit <- bank_data %>%
+  filter(bank_id == 0) %>% 
+     mutate(
+          sdo_nom = cre_cccn/1000, sdo_per = cre_cccnrp/1000, sdo_aut = cre_cccaut/1000,  #Converting to mmdp
+               sdo_abcd = cre_cccadqbimu/1000, sdo_micro = cre_cccmicro/1000, 
+               periodo = (floor(time_monthly / 12) + 1960) * 100 + time_monthly %% 12 + 1,
+          zsdo_nom = (sdo_nom - mean(sdo_nom, na.rm = T)) / sd(sdo_nom, na.rm = T),
+          zsdo_per = (sdo_per - mean(sdo_per, na.rm = T)) / sd(sdo_per, na.rm = T),
+          zsdo_aut = (sdo_aut - mean(sdo_aut, na.rm = T)) / sd(sdo_aut, na.rm = T),
+          zsdo_abcd = (sdo_abcd - mean(sdo_abcd, na.rm = T)) / sd(sdo_abcd, na.rm = T),
+          zsdo_micro = (sdo_micro - mean(sdo_micro, na.rm = T)) / sd(sdo_micro, na.rm = T)
+            ) %>% 
+     mutate_if(is.numeric, ~round(., 3)) 
+
+#Defining quantiles for time-var
+plot_breaks <- floor(quantile(system_credit$time_monthly))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+
+# Create a ggplot visualization
+sdos_reales <- plot_ly(system_credit, 
+                      x = ~ time_monthly, y = ~ zsdo_nom, name = "Nómina", type = 'scatter', mode = 'lines', line = list(width = 1, color = "darkblue"),
+                      text = ~paste("Periodo:", periodo, "\nSaldo real", sdo_nom), hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zsdo_per, mode = 'lines', line = list(width = 1, color = "azure4"),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_per), name = "Personal", hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zsdo_aut, mode = 'lines', line = list(width = 1, color = "chartreuse4"),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_aut), name = "Automotriz", hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zsdo_abcd, mode = 'lines', line = list(width = 1),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_abcd), name = "ABCD", hoverinfo = 'text+name') %>%
+     add_trace(y = ~ zsdo_micro, mode = 'lines', line = list(width = 1, color = "gold3"),
+               text = ~paste("Periodo:", periodo, "\nSaldo real:", sdo_micro), name = "Microcrédito (Grupal)", hoverinfo = 'text+name') %>%
+     layout(title = "Dinámica de saldos reales. \nDatos normalizados para proceso de visualización",
+            xaxis = list(title = "Fecha",
+                         tickmode = "array",
+                         tickvals = plot_breaks,
+                         ticktext = plot_lbreaks
+            ),
+            yaxis = list(title = "Saldos reales normalizados")
+     )
+
+sdos_reales
+
+```
+
+
+### Valores y distancia prepandemia
+
+```{r, echo=FALSE, fig.width=12}
+
+result_list <- list()
+
+# Loop through the variables
+for (tc in c("cre_cct", "cre_cccn", "cre_cccnrp", "cre_cccadqbimu", "cre_cccaut", "cre_ccctc",
+             "cre_cce", "cre_ccv", "cre_cccmicro")) {
+  # Perform data manipulation for each variable
+  temp_data <- bank_data %>%
+       mutate(sdo_actual = if_else(monthly_date == stata_date_string , !!as.symbol(tc), 0 ),
+              pre_pan_cred = if_else(monthly_date == "2020m2" , !!as.symbol(tc), 0 )) %>% 
+       group_by(bank_id) %>% 
+       mutate(max_cred = max(!!as.symbol(tc)), na.rm = TRUE ) %>% 
+       ungroup()  %>%
+       mutate(time_max = if_else(max_cred == !!as.symbol(tc), monthly_date, NULL)) %>% 
+       group_by(bank_id) %>% 
+       mutate(pre_pan_cred = max(pre_pan_cred),
+              true_time_max = first(na.omit(time_max))) %>% 
+       ungroup()  %>% 
+    select(time_monthly, bank_str, !!as.symbol(tc), sdo_actual, pre_pan_cred, max_cred, true_time_max) %>%  # Use !!as.symbol(tc) to select the variable dynamically
+    mutate(
+      vs_pandemic = (!!as.symbol(tc) / pre_pan_cred - 1 )*100,
+      vs_max = (!!as.symbol(tc) / max_cred - 1 )*100,
+      tdc = tc
+    ) %>%
+    filter(time_monthly == stata_date_number) %>% 
+       select(-!!as.symbol(tc))
+  
+  # Store the result in the list
+  result_list[[tc]] <- as.data.frame(temp_data)
+}
+
+
+ch_vs_time <- do.call(rbind, result_list) %>%
+  select(-time_monthly) %>% 
+     relocate(bank_str, tdc, sdo_actual, pre_pan_cred, vs_pandemic, max_cred,  vs_max, true_time_max) %>% 
+     mutate(tdc = case_when(
+         tdc == "cre_cct" ~ "Total (CCT)",
+         tdc == "cre_ccv" ~ "Vivienda (CCV)",
+         tdc == "cre_cce" ~ "Empresas (CCE)",
+         tdc == "cre_ccct" ~ "Consumo (CCCT)",
+         tdc == "cre_cccn" ~ "Nómina (CCCN)",
+         tdc == "cre_cccmicro" ~ "Microcréditos (CCCMICRO)", 
+         tdc == "cre_cccadqbimu" ~ "ABCD (CCCADQBIMU)",
+         tdc == "cre_cccnrp" ~ "Personal (CCCNRP)",
+         tdc == "cre_cccaut" ~ "Automotriz (CCCAUT)",
+         tdc == "cre_ccctc" ~ "Tarjetas (CCCTC)",
+         TRUE ~ tdc  # Keep unchanged if none of the conditions match
+       )
+     ) %>%
+     mutate(
+          is_total_bm = if_else(bank_str == "Total Banca Múltiple", 0, 1),
+          is_total_cred = if_else(tdc == "Total (CCT)", 0, 1),
+          sdo_actual = sdo_actual/1000,
+          max_cred = max_cred/1000,
+          pre_pan_cred = pre_pan_cred/1000
+          ) %>% 
+     mutate(bank_str = if_else(bank_str == "Total Banca Múltiple", "Sistema", bank_str)) %>% 
+     arrange(is_total_bm, is_total_cred) %>% 
+          select(-is_total_cred, -is_total_bm)
+
+val_cct_vpan <- ch_vs_time %>%
+                    filter(bank_str == "Sistema" & tdc == "Total (CCT)") %>%
+                    pull(vs_pandemic) %>%
+                    round(2) %>% 
+                    as.numeric()
+
+ef_val_cct_vpan <- ifelse(val_cct_vpan > 0, "arriba", "abajo")
+val_cct_vmax <- ch_vs_time %>%
+                    filter(bank_str == "Sistema" & tdc == "Total (CCT)") %>%
+                    pull(vs_max) %>%
+                    round(2) %>% 
+                    as.numeric()
+ef_val_cct_vmax <- ifelse(val_cct_vmax > 0, "arriba", "abajo")
+  
+
+```
+
+
+
+
+La cartera de crédito total está **`r paste0(val_cct_vpan,"% ", ef_val_cct_vpan)`** *de sus niveles prepandemia* (feb20), y **`r paste0(abs(val_cct_vmax),"% ", ef_val_cct_vmax)`** de su *máximo histórico* (abr20)
+
+
+```{r, echo=FALSE, fig.width=12}
+
+datatable(ch_vs_time,
+          caption = "Saldos en miles de millones de pesos reales",
+               rownames = F,
+               colnames = c("Banco", "Tipo de crédito", "Saldo Actual",
+                            "Saldo pre pandemia (feb20)", "Diferencia c.r.a. feb20 (%)",
+                            "Saldo máximos", "Diferencia c.r.al máximo (%)", "Periodo del máximo"),
+          filter = "top",
+          extensions = 'Buttons',
+          options = list(dom='Bfrtip',
+               buttons=c('copy', 'csv', 'excel', 'print', 'pdf'))) %>% 
+formatRound(columns = c(3:7), digits = 2)
+
+```
+
+
+## Distribución de la cartera {.tabset}
+
+### El G-7 y el sistema
+
+```{r, echo=FALSE, fig.width=9}
+subdata_cce <- bank_data %>%
+  filter(bank_id != 0 & time_monthly == stata_date_number) %>%
+  filter(!is.na(cre_cce)) %>% 
+  arrange(-cre_cce) %>%
+  mutate(
+    ranking = row_number(),
+    bank_type = ifelse(ranking <= 7, ranking, 999)
+  ) %>%
+  group_by(bank_type) %>%
+  summarise(
+    credit = sum(cre_cce),
+    bank_str = first(bank_str)
+  ) %>%
+  mutate(
+    bank_str = if_else(bank_type == "999", "Otros", bank_str),
+    bank_str = factor(bank_str, levels = bank_str[order(bank_type)])
+  ) %>% 
+  mutate(   #Adding colors of banks
+    custom_colors = case_when(
+      bank_str == "BBVA" ~ "#01447F",
+      bank_str == "Santander" ~ "EC0000",
+      bank_str == "Banorte" ~ "#FF0020",
+      bank_str == "Inbursa" ~ "#002F5D",
+      bank_str == "Citibanamex" ~ "#056CAE",
+      bank_str == "Scotiabank" ~ "#EF0702",
+      bank_str == "Bajío" ~ "#7142A8",
+      bank_str == "Otros" ~ "#EAEDED",
+      bank_str == "HSBC" ~ "#E12523",
+      bank_str == "Compartamos" ~ "#D90760",
+      bank_str == "Azteca" ~ "#00754F",
+      TRUE ~ "#1f77b4"  # Default color for other categories
+    )
+  )
+
+
+subdata_cct <- bank_data %>%
+  filter(bank_id != 0 & time_monthly == stata_date_number) %>%
+  filter(!is.na(cre_cct)) %>% 
+  arrange(-cre_cct) %>%
+  mutate(
+    ranking = row_number(),
+    bank_type = ifelse(ranking <= 7, ranking, 999)
+  ) %>%
+  group_by(bank_type) %>%
+  summarise(
+    credit = sum(cre_cct),
+    bank_str = first(bank_str)
+  ) %>%
+  mutate(
+    bank_str = if_else(bank_type == "999", "Otros", bank_str),
+    bank_str = factor(bank_str, levels = bank_str[order(bank_type)])
+  ) %>% 
+  mutate(   #Adding colors of banks
+    custom_colors = case_when(
+      bank_str == "BBVA" ~ "#01447F",
+      bank_str == "Santander" ~ "EC0000",
+      bank_str == "Banorte" ~ "#FF0020",
+      bank_str == "Inbursa" ~ "#002F5D",
+      bank_str == "Citibanamex" ~ "#056CAE",
+      bank_str == "Scotiabank" ~ "#EF0702",
+      bank_str == "Bajío" ~ "#7142A8",
+      bank_str == "Otros" ~ "#EAEDED",
+      bank_str == "HSBC" ~ "#E12523",
+      bank_str == "Compartamos" ~ "#D90760",
+      bank_str == "Azteca" ~ "#00754F",
+      TRUE ~ "#1f77b4"  # Default color for other categories
+    )
+  )
+
+
+subdata_ccct <- bank_data %>%
+  filter(bank_id != 0 & time_monthly == stata_date_number) %>%
+  filter(!is.na(cre_ccct)) %>% 
+  arrange(-cre_ccct) %>%
+  mutate(
+    ranking = row_number(),
+    bank_type = ifelse(ranking <= 7, ranking, 999)
+  ) %>%
+  group_by(bank_type) %>%
+  summarise(
+    credit = sum(cre_ccct),
+    bank_str = first(bank_str)
+  ) %>%
+  mutate(
+    bank_str = if_else(bank_type == "999", "Otros", bank_str),
+    bank_str = factor(bank_str, levels = bank_str[order(bank_type)])
+  ) %>% 
+  mutate(   #Adding colors of banks
+    custom_colors = case_when(
+      bank_str == "BBVA" ~ "#01447F",
+      bank_str == "Santander" ~ "EC0000",
+      bank_str == "Banorte" ~ "#FF0020",
+      bank_str == "Inbursa" ~ "#002F5D",
+      bank_str == "Citibanamex" ~ "#056CAE",
+      bank_str == "Scotiabank" ~ "#EF0702",
+      bank_str == "Bajío" ~ "#7142A8",
+      bank_str == "Otros" ~ "#EAEDED",
+      bank_str == "HSBC" ~ "#E12523",
+      bank_str == "Compartamos" ~ "#D90760",
+      bank_str == "Azteca" ~ "#00754F",
+      TRUE ~ "#1f77b4"  # Default color for other categories
+    )
+  )
+
+
+# Create a pie plot
+pl_cce <- plot_ly()
+
+pl_cce <- pl_cce %>% 
+     add_pie(data=subdata_cct, labels = ~bank_str, values = ~credit, type = 'pie', 
+             name = "Total", domain = list(x = c(0, 0.4), y = c(0.4, 1)),
+        textinfo = 'label+percent',
+        text = ~paste('Saldo total: \n', bank_str, ": $", round(credit/1000, 2), ' mmdp'),
+        hoverinfo = 'text',
+        marker = list(
+                      colors = ~custom_colors,
+                      line = list(color = '#FFFFFF', width = 1))) 
+
+pl_cce <- pl_cce %>% 
+     add_pie(data=subdata_cce, labels = ~bank_str, values = ~credit, type = 'pie', 
+             name = "Empresas", domain = list(x = c(0.62, 1), y = c(0.37, 1)),
+        textinfo = 'label+percent',
+        text = ~paste('Saldo empresas: \n', bank_str, ": $", round(credit/1000, 2), ' mmdp'),
+        hoverinfo = 'text',
+        marker = list(
+                      colors = ~custom_colors,
+                      line = list(color = '#FFFFFF', width = 1)))
+
+pl_cce <- pl_cce %>% 
+     add_pie(data=subdata_ccct, labels = ~bank_str, values = ~credit, type = 'pie', 
+             name = "Consumo", domain = list(x = c(0.25, 0.75), y = c(0, 0.35)),
+        textinfo = 'label+percent',
+        text = ~paste('Saldo consumo: \n', bank_str, ": $", round(credit/1000, 2), ' mmdp'),
+        hoverinfo = 'text',
+        marker = list(
+                      colors = ~custom_colors,
+                      line = list(color = '#FFFFFF', width = 1)))
+
+pl_cce  %>% 
+     layout(title = 'Distribución del top 7 de bancos', showlegend = F,
+     annotations = list(  
+           list(  
+             x = 0.05,   
+             y = 0.97,   
+             font = list(size = 15),   
+             text = "Saldos Totales",   
+             xref = "paper",   
+             yref = "paper",   
+             xanchor = "center",   
+             yanchor = "bottom",   
+             showarrow = FALSE  
+           ),   
+           list(  
+             x = 0.95,   
+             y = 0.97,   
+             font = list(size = 15),   
+             text = "Empresas",   
+             xref = "paper",   
+             yref = "paper",   
+             xanchor = "center",   
+             yanchor = "bottom",   
+             showarrow = FALSE  
+           ),   
+           list(  
+             x = 0.5,   
+             y = 0.5,   
+             font = list(size = 15),   
+             text = "Consumo",   
+             xref = "paper",   
+             yref = "paper",   
+             xanchor = "center",   
+             yanchor = "bottom",   
+             showarrow = FALSE  
+           )))
+
+
+
+```
+
+
+
+### Todos los bancos y el sistema
+
+```{r, echo=FALSE, fig.width=12}
+
+#Participación en su propia cartera
+n_bank_data_x <- bank_data %>% 
+     select(bank_str, time_monthly, starts_with("shb_")) %>% 
+     filter(time_monthly == stata_date_number) %>%
+  pivot_longer(cols = starts_with("shb_"),
+               names_to = "variable",
+               values_to = "value") %>% 
+     rename(TdC = variable,
+            own_cred_sh = value) %>% 
+     mutate(TdC = gsub("shb_", "sh_cre_", TdC))
+
+#Participación en la cartera total (sistema)
+n_bank_data_y <- bank_data %>%
+  filter(time_monthly == stata_date_number & bank_id != 0) %>%
+  select(bank_str, starts_with("cre_")) %>%
+     select(!ends_with("_r") & !ends_with("_tot") & !ends_with("_vig") & !ends_with("_ven") & !ends_with("_")) %>%
+  group_by(bank_str) %>%
+  summarise(across(starts_with("cre_"), ~ sum(., na.rm = TRUE))) %>%
+  mutate(across(starts_with("cre_"), ~ 100 * ./sum(.))) %>%
+  rename_with(~ paste0("sh_", .), starts_with("cre_")) %>%
+  ungroup() %>%
+  select(bank_str = bank_str, starts_with("sh_")) %>% 
+     pivot_longer(cols = starts_with("sh_"),
+               names_to = "TdC",
+               values_to = "system_cred_sh")
+
+n_bank_data_xy <- left_join(n_bank_data_x, n_bank_data_y, by = c("bank_str", "TdC"))  %>% 
+     select(!time_monthly) %>% 
+     mutate(TdC = ifelse(grepl("ccef", TdC), "Financieros", TdC),
+            TdC = ifelse(grepl("cce", TdC), "Empresas", TdC),
+            TdC = ifelse(grepl("ccctc", TdC), "Tarjetas", TdC),
+            TdC = ifelse(grepl("ccct", TdC), "Consumo", TdC),
+            TdC = ifelse(grepl("cct", TdC), "Total", TdC),
+            TdC = ifelse(grepl("cccnrp", TdC), "Personal", TdC),
+            TdC = ifelse(grepl("cccn", TdC), "Nómina", TdC),
+            TdC = ifelse(grepl("cccaut", TdC), "Auto", TdC),
+            TdC = ifelse(grepl("cccadqbimu", TdC), "ABCD", TdC),
+            TdC = ifelse(grepl("ccv", TdC), "Vivienda", TdC),
+            TdC = ifelse(grepl("micro", TdC), "Micro (grupal)", TdC),
+            TdC = ifelse(grepl("ccgt", TdC), "Gubernamentales", TdC),
+            TdC = ifelse(grepl("cccnro", TdC), "Otros", TdC),
+            TdC = ifelse(grepl("ccoac", TdC), "Arrendables", TdC)
+     ) %>% 
+     arrange(bank_str) %>% 
+     mutate(own_cred_sh = ifelse(own_cred_sh == 0, NA_integer_, own_cred_sh ),
+            system_cred_sh = ifelse(system_cred_sh == 0, NA_integer_, system_cred_sh )) %>% 
+     filter(!is.na(own_cred_sh) & !is.na(system_cred_sh))
+
+datatable(n_bank_data_xy,
+caption = "Participación de los bancos en el sistema. Por ciento, cada columna suma 100%.",
+     colnames = c('Banco', 'Cartera', 'Participación dentro del Banco', 'Participación en el sistema'),
+     rownames = F,
+     extensions = 'Buttons',
+          options = list(dom='Bfrtip', pageLength = 14,
+          buttons=c('copy', 'csv', 'excel', 'print', 'pdf'))
+) %>%
+formatRound(columns = c(3:4), digits = 3)
+```
+
+### Distribución por banco
+```{r, echo=FALSE, fig.width=9}
+datatable(data = bank_data %>%  
+     arrange(-cre_cct) %>% 
+       select(bank_str, time_monthly, starts_with("shb_")) %>% 
+       filter(time_monthly == stata_date_number) %>% 
+       select(-time_monthly) %>% 
+            mutate(ccc_cccotrarr = shb_ccoac + shb_cccnro) %>% 
+      select(-shb_ccoac,-shb_cccnro )
+            ,
+     caption = paste("Distribución del crédito por banco. Cada fila suma 100% (salvo por cuestiones de redondeo). \n La columna <<Otros>> contiene arrendamiento capitalizable y otros"),
+     rownames = F ,
+     colnames = c("Banco", "Empresas", "TDC", "Pers.", "Nómina", "Auto", "Viv", "SS. Fin", "Gob.", "ABCD", "Micro.", "Otros"),
+     extensions = 'Buttons',
+          options = list(dom='Bfrtip',
+          buttons=c('copy', 'csv', 'excel', 'print', 'pdf'))
+) %>% 
+formatRound(columns = c(2:12), digits = 2) %>% 
+formatStyle(columns = colnames(.), fontSize = "55%")
+               
+```
+
+## Variaciones reales en el saldo de crédito {.tabset}
+
+### Variaciones más importantes
+
+```{r, echo=FALSE}
+datatable(data = bank_data %>%  
+     select(bank_str,time_monthly, cre_cct, cre_cce, cre_ccv, cre_ccct, cre_ccctc) %>% 
+          mutate(bank_id = bank_str) %>% 
+     arrange(bank_id, time_monthly) %>%
+     group_by(bank_id) %>%
+     mutate(ch1_cre_cct = 100 * (cre_cct / lag(cre_cct) -1),
+            ch1_cre_cce = 100 * (cre_cce / lag(cre_cce) -1),
+            ch1_cre_ccv = 100 * (cre_ccv / lag(cre_ccv) -1),
+            ch1_cre_ccct = 100 * (cre_ccct / lag(cre_ccct) -1),
+            ch1_cre_ccctc = 100 * (cre_ccctc / lag(cre_ccctc) -1),
+            ch12_cre_cct = 100 * (cre_cct / lag(cre_cct, 12) -1),
+            ch12_cre_cce = 100 * (cre_cce / lag(cre_cce, 12) -1),
+            ch12_cre_ccv = 100 * (cre_ccv / lag(cre_ccv, 12) -1),
+            ch12_cre_ccct = 100 * (cre_ccct / lag(cre_ccct, 12) -1),
+            ch12_cre_ccctc = 100 * (cre_ccctc / lag(cre_ccctc, 12) -1),) %>% 
+          select(cre_cct, time_monthly, starts_with("ch1_"), starts_with("ch12_")) %>% 
+          filter(time_monthly == stata_date_number) %>% 
+     arrange(-cre_cct) %>%
+     select(-time_monthly, -cre_cct)
+     ,
+     caption = "Aumento de crédito, en términos reales, por banco. D1 implica el cambio con el mes inmediato anterior. D12 contra el año pasado",
+     rownames = F ,
+     colnames = c('Banco',
+          'D1 Total (%)', 'D1 Empresas (%)', 'D1 Vivienda (%)', "D1 Consumo (%)", "D1 TDC (%)" ,
+          'D12 Total (%)', 'D12 Empresas (%)', 'D12 Vivienda (%)', "D12 Consumo (%)", "D12 TDC (%)"),
+     extensions = 'Buttons',
+          options = list(dom='Bfrtip',
+          buttons=c('copy', 'csv', 'excel', 'print', 'pdf'))
+) %>% 
+formatRound(columns = c(2:11), digits = 2)
+ 
+```
+
+
+### Otros tipos de crédito
+
+```{r, echo=FALSE}
+datatable(data = bank_data %>%  
+     select(bank_str,time_monthly, cre_cct, cre_cccn, cre_cccnrp, cre_cccadqbimu, cre_cccaut, cre_cccmicro) %>% 
+          mutate(bank_id = bank_str) %>% 
+     arrange(bank_id, time_monthly) %>%
+     group_by(bank_id) %>%
+     mutate(ch1_cre_cccn = 100 * (cre_cccn / lag(cre_cccn) -1),
+            ch1_cre_cccnrp = 100 * (cre_cccnrp / lag(cre_cccnrp) -1),
+            ch1_cre_cccadqbimu = 100 * (cre_cccadqbimu / lag(cre_cccadqbimu) -1),
+            ch1_cre_cccaut = 100 * (cre_cccaut / lag(cre_cccaut) -1),
+            ch1_cre_cccmicro = 100 * (cre_cccmicro / lag(cre_cccmicro) -1),
+            ch12_cre_cccn = 100 * (cre_cccn / lag(cre_cccn, 12) -1),
+            ch12_cre_cccnrp  = 100 * (cre_cccnrp / lag(cre_cccnrp, 12) -1),
+            ch12_cre_cccadqbimu = 100 * (cre_cccadqbimu / lag(cre_cccadqbimu, 12) -1),
+            ch12_cre_cccaut = 100 * (cre_cccaut / lag(cre_cccaut, 12) -1),
+            ch12_cre_cccmicro = 100 * (cre_cccmicro / lag(cre_cccmicro, 12) -1),) %>% 
+          filter(time_monthly == stata_date_number) %>% 
+          filter(!is.na(cre_cccn) & !is.na(cre_cccnrp) & !is.na(cre_cccadqbimu) & !is.na(cre_cccaut) & !is.na(cre_cccmicro)) %>%
+          select(cre_cct, time_monthly, starts_with("ch1_"), starts_with("ch12_")) %>% 
+     arrange(-cre_cct) %>%
+     select(-time_monthly, -cre_cct),
+     caption = "Aumento de crédito, en términos reales, por banco. D1 implica el cambio con el mes inmediato anterior; D12 contra el año pasado",
+     rownames = F ,
+     colnames = c('Banco',
+          'D1 Nómina (%)', 'D1 Personal (%)', 'D1 ABCD (%)', "D1 Auto (%)", "D1 Micro (%)" , 
+          'D12 Nómina (%)', 'D12 Personal (%)', 'D12 ABCD (%)', "D12 Auto (%)", "D12 Micro (%)"),
+     extensions = 'Buttons',
+          options = list(dom='Bfrtip',
+          buttons=c('copy', 'csv', 'excel', 'print', 'pdf'))
+) %>% 
+formatRound(columns = c(2:11), digits = 2)
+
+```
+
+
+
+          
+
+# Índice de Morosidad {.tabset}
+
+## Niveles de Morosidad
+```{r, echo=FALSE, fig.width=9}
+system_credit <- bank_data %>%
+  filter(bank_id == 0) %>% 
+     mutate(periodo = (floor(time_monthly / 12) + 1960) * 100 + time_monthly %% 12 + 1) %>% 
+     mutate(across(starts_with("imor"), ~round(., digits = 3)))
+
+plot_breaks <- floor(quantile(system_credit$time_monthly))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+imor_plot <- plot_ly(system_credit, x = ~ time_monthly, y = ~ imor_cct, name = 'Total', type = 'scatter', mode = 'lines', line = list(width = 3),
+               text = ~paste("Periodo:", periodo), hoverinfo = 'text+name+y') %>%
+     add_trace(y = ~ imor_cce, name = 'Empresas', mode = 'lines', line = list(width = 2)) %>% 
+     add_trace(y = ~ imor_ccct, name = 'Consumo', mode = 'lines', line = list(width = 2)) %>% 
+     add_trace(y = ~ imor_ccv, name = 'Vivienda', mode = 'lines', line = list(width = 2)) %>% 
+     add_trace(y = ~ imor_ccctc, name = 'TDC', mode = 'lines', line = list(width = 0.7)) %>% 
+     add_trace(y = ~ imor_cccn, name = 'Nómina', mode = 'lines', line = list(width = 0.7)) %>%
+     add_trace(y = ~ imor_cccaut, name = 'Automotriz', mode = 'lines', line = list(width = 0.7)) %>%
+     add_trace(y = ~ imor_cccnrp, name = 'Personal', mode = 'lines', line = list(width = 0.7)) %>%
+     add_trace(y = ~ imor_cccmicro, name = 'Microcréditos', mode = 'lines', line = list(width = 0.7)) %>%
+  layout(title = "Índice de Morosidad",
+    xaxis = list(title = "Fecha",
+      tickmode = "array",
+      tickvals = plot_breaks,
+      ticktext = plot_lbreaks
+    ),
+    yaxis = list(title = "IMOR (%)")
+  )
+
+
+imor_plot
+
+
+
+
+```
+
+
+## Cambios y tendencias (Sistema)
+
+Se muestra la evolución de la morosidad contra el mes anterior, el semestre anterior y el año anterior. Su lectura entonces es en **puntos porcentuales**. Además, por la naturaleza de la morosidad, cuando la variación **aumenta** se dice que hay **mayor riesgo** en el sistema.
+
+```{r, echo=FALSE}
+# Create an empty list to store the results
+result_list <- list()
+
+# Loop through the variables
+for (tc in c("imor_cct", "imor_ccct", "imor_cccn", "imor_cccnrp", "imor_cccadqbimu", "imor_cccaut", "imor_ccctc",
+             "imor_cce", "imor_ccv", "imor_cccmicro")) {
+  # Perform data manipulation for each variable
+  temp_data <- bank_data %>%
+    filter(bank_id == 0) %>%
+    select(time_monthly, !!as.symbol(tc)) %>%  # Use !!as.symbol(tc) to select the variable dynamically
+    mutate(
+         contemp = !!as.symbol(tc),
+      vs_prev_month = !!as.symbol(tc) - lag(!!as.symbol(tc)),
+      vs_prev_sem = !!as.symbol(tc) - lag(!!as.symbol(tc), 6),
+      vs_prev_year = !!as.symbol(tc) - lag(!!as.symbol(tc), 12), 
+      vs_prev_hist = !!as.symbol(tc) - mean(!!as.symbol(tc), na.rm = TRUE)
+    ) %>%
+    filter(time_monthly == stata_date_number) %>% 
+       select(-!!as.symbol(tc))
+  
+  # Store the result in the list
+  result_list[[tc]] <- as.data.frame(temp_data)
+}
+
+imor_changes <- do.call(rbind, result_list) %>%
+  select(-time_monthly) %>%
+  mutate_all(~ round(., digits = 3))
+
+datatable(imor_changes,
+             colnames = c("Valor actual", "Contra mes anterior", "Contra Semestre anterior", "Contra año anterior", "contra histórico"),
+             rownames = c("Total", "Consumo", "Nómina", "Personal", "ABCD", "Auto", "Tarjetas", "Empresas", "Vivienda", "Micro"),
+             caption = "Diferencias en morosidad contra")  %>% 
+formatRound(columns = c(1:5), digits = 3)
+```
+
+## Cambios y tendencias (por banco)
+
+```{r, echo=FALSE}
+
+# Create an empty list to store the results
+result_list <- list()
+
+# Loop through the variables
+for (tc in c("imor_cct", "imor_cce", "imor_ccv", "imor_cccmicro", 
+          "imor_ccct", "imor_cccn", "imor_cccnrp", "imor_cccadqbimu", "imor_cccaut", "imor_ccctc")) {
+  # Perform data manipulation for each variable
+  temp_data <- bank_data %>%
+       arrange(bank_id, time_monthly) %>%
+          group_by(bank_id) %>%
+    select(time_monthly, bank_str, !!as.symbol(tc)) %>%  # Use !!as.symbol(tc) to select the variable dynamically
+    mutate(
+      bank_str = bank_str,
+      tdc = tc,
+      contemp = !!as.symbol(tc),
+      vs_prev_month = !!as.symbol(tc) - lag(!!as.symbol(tc)),
+      vs_prev_sem = !!as.symbol(tc) - lag(!!as.symbol(tc), 6),
+      vs_prev_year = !!as.symbol(tc) - lag(!!as.symbol(tc), 12), 
+      vs_prev_hist = !!as.symbol(tc) - mean(!!as.symbol(tc), na.rm = T)
+    ) %>%
+    filter(time_monthly == stata_date_number) %>% 
+       select(-!!as.symbol(tc))
+  
+  # Store the result in the list
+  result_list[[tc]] <- as.data.frame(temp_data)
+}
+
+imor_changes <- do.call(rbind, result_list) %>%
+  select(-time_monthly, -c(bank_id)) %>% 
+     mutate(tdc = case_when(
+         tdc == "imor_cct" ~ "Total (CCT)",
+         tdc == "imor_ccv" ~ "Vivienda (CCV)",
+         tdc == "imor_cce" ~ "Empresas (CCE)",
+         tdc == "imor_ccct" ~ "Consumo (CCCT)",
+         tdc == "imor_cccn" ~ "Nómina (CCCN)",
+         tdc == "imor_cccmicro" ~ "Microcréditos (CCCMICRO)", 
+         tdc == "imor_cccadqbimu" ~ "ABCD (CCCADQBIMU)",
+         tdc == "imor_cccnrp" ~ "Personal (CCCNRP)",
+         tdc == "imor_cccaut" ~ "Automotriz (CCCAUT)",
+         tdc == "imor_ccctc" ~ "Tarjetas (CCCTC)",
+         TRUE ~ tdc  # Keep unchanged if none of the conditions match
+       )
+       ) %>% 
+       filter(!is.na(vs_prev_month) & !is.na(vs_prev_sem) & !is.na(vs_prev_year) & !is.na(vs_prev_hist)) 
+     
+
+datatable(imor_changes,
+     caption = "Aumento de morosidad, por banco",
+     rownames = F ,
+     filter = "top", 
+     colnames = c("Banco", "Tipo de crédito",
+                  "Valor actual", "Contra mes anterior", "Contra Semestre anterior", "Contra año anterior", "contra histórico"),
+     extensions = 'Buttons',
+          options = list(dom='Bfrtip',
+          buttons=c('copy', 'csv', 'excel', 'print', 'pdf'))
+) %>% 
+formatRound(columns = c(3:7), digits = 3)
+```
+
+
+# Indicadores de bancos
+```{r, echo=FALSE, fig.width=12}
+
+##Deiniyng colors
+pal_banks <- paletteer_c("ggthemes::Blue Light", 7)
+#ICAP
+system_credit <- bank_data %>% 
+     select(bank_str, time_monthly, icap)
+system_credit <- spread(system_credit, key = "bank_str", value = "icap")
+system_credit <- system_credit %>% 
+     select(time_monthly,'Total Banca Múltiple', BBVA, Banorte, Santander, Inbursa, Citibanamex, Scotiabank, HSBC)
+
+#Defining quantiles for time-var
+plot_breaks <- floor(quantile(system_credit$time_monthly))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+#ICAP Plot
+icap <- ggplot(system_credit, aes(x = time_monthly)) +
+  geom_line(aes(y = `Total Banca Múltiple`, color ="Total"), lwd = 1.5) +
+  geom_line(aes(y = BBVA, color ="BBVA"), lwd = 0.5) +
+  geom_line(aes(y = Banorte, color ="Banorte"), lwd = 0.5) +
+  geom_line(aes(y = Santander, color ="Santander"), lwd = 0.5) +
+  geom_line(aes(y = Inbursa, color ="Inbursa"), lwd = 0.5) +
+  geom_line(aes(y = Citibanamex, color ="Citibanamex"), lwd = 0.5) +
+  geom_line(aes(y = Scotiabank , color ="Scotiabank"), lwd = 0.5) +
+  geom_line(aes(y = HSBC, color ="HSBC"), lwd = 0.5) +
+            scale_color_manual(values = c("Total" = "dodgerblue3",
+                               "BBVA" = pal_banks[7],
+                               "Banorte" = pal_banks[6],
+                               "Santander" = pal_banks[5],
+                               "Inbursa" = pal_banks[4],
+                               "Citibanamex" = pal_banks[3],
+                               "Scotiabank" = pal_banks[2],
+                               "HSBC" = pal_banks[1])
+                         ) +
+  guides(color = guide_legend(title = "Banca Múltiple y G-7")) +
+  labs(
+    title = "Índice de Capitalización",
+    x = "Fecha",
+    y = "ICAP"
+  ) +
+  theme_classic() +
+  scale_x_continuous(
+    breaks = plot_breaks,   # Set the x-axis breaks to "time_monthly"
+    labels = plot_lbreaks  # Custom labels for x-axis
+  ) +
+  theme(
+    plot.title = element_text(hjust = 1),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+    legend.position = "none"
+  ) 
+```
+
+
+```{r, echo=FALSE, fig.width=12}
+#LIQ
+system_credit <- bank_data %>% 
+     select(bank_str, time_monthly, liq)
+system_credit <- spread(system_credit, key = "bank_str", value = "liq")
+system_credit <- system_credit %>% 
+     select(time_monthly,'Total Banca Múltiple', BBVA, Banorte, Santander, Inbursa, Citibanamex, Scotiabank, HSBC) %>% 
+     filter(!is.na(BBVA))
+
+#Defining quantiles for time-var
+plot_breaks <- floor(quantile(system_credit$time_monthly[!is.na(system_credit$`Total Banca Múltiple`)]))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+#LIQ Plot
+liq <- ggplot(system_credit, aes(x = time_monthly)) +
+  geom_line(aes(y = `Total Banca Múltiple`, color ="Total"), lwd = 1.5) +
+  geom_line(aes(y = BBVA, color ="BBVA"), lwd = 0.5) +
+  geom_line(aes(y = Banorte, color ="Banorte"), lwd = 0.5) +
+  geom_line(aes(y = Santander, color ="Santander"), lwd = 0.5) +
+  geom_line(aes(y = Inbursa, color ="Inbursa"), lwd = 0.5) +
+  geom_line(aes(y = Citibanamex, color ="Citibanamex"), lwd = 0.5) +
+  geom_line(aes(y = Scotiabank , color ="Scotiabank"), lwd = 0.5) +
+  geom_line(aes(y = HSBC, color ="HSBC"), lwd = 0.5) +
+            scale_color_manual(values = c("Total" = "dodgerblue3",
+                               "BBVA" = pal_banks[7],
+                               "Banorte" = pal_banks[6],
+                               "Santander" = pal_banks[5],
+                               "Inbursa" = pal_banks[4],
+                               "Citibanamex" = pal_banks[3],
+                               "Scotiabank" = pal_banks[2],
+                               "HSBC" = pal_banks[1])
+                         ) +
+  guides(color = guide_legend(title = "Banca Múltiple y G-7")) +
+  labs(
+    title = "Índice de Liquidez",
+    x = "Fecha",
+    y = "Liquidez"
+  ) +
+  theme_classic() +
+  scale_x_continuous(
+    breaks = plot_breaks,   # Set the x-axis breaks to "time_monthly"
+    labels = plot_lbreaks  # Custom labels for x-axis
+  ) +
+  theme(
+    plot.title = element_text(hjust = 1),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+    legend.position = "none"
+  ) 
+```
+
+
+```{r, echo=FALSE, fig.width=12}
+#ROA
+system_credit <- bank_data %>% 
+     select(bank_str, time_monthly, roa_flujo)
+system_credit <- spread(system_credit, key = "bank_str", value = "roa_flujo")
+system_credit <- system_credit %>% 
+     select(time_monthly,'Total Banca Múltiple', BBVA, Banorte, Santander, Inbursa, Citibanamex, Scotiabank, HSBC)
+
+#Defining quantiles for time-var
+plot_breaks <- floor(quantile(system_credit$time_monthly))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+#ROA Plot
+roa <- ggplot(system_credit, aes(x = time_monthly)) +
+  geom_line(aes(y = `Total Banca Múltiple`, color ="Total"), lwd = 1.5) +
+  geom_line(aes(y = BBVA, color ="BBVA"), lwd = 0.5) +
+  geom_line(aes(y = Banorte, color ="Banorte"), lwd = 0.5) +
+  geom_line(aes(y = Santander, color ="Santander"), lwd = 0.5) +
+  geom_line(aes(y = Inbursa, color ="Inbursa"), lwd = 0.5) +
+  geom_line(aes(y = Citibanamex, color ="Citibanamex"), lwd = 0.5) +
+  geom_line(aes(y = Scotiabank , color ="Scotiabank"), lwd = 0.5) +
+  geom_line(aes(y = HSBC, color ="HSBC"), lwd = 0.5) +
+     scale_color_manual(values = c("Total" = "dodgerblue3",
+                                    "BBVA" = pal_banks[7],
+                                    "Banorte" = pal_banks[6],
+                                    "Santander" = pal_banks[5],
+                                    "Inbursa" = pal_banks[4],
+                                   "Citibanamex" = pal_banks[3],
+                                   "Scotiabank" = pal_banks[2],
+                                   "HSBC" = pal_banks[1])
+                         ) +
+  guides(color = guide_legend(title = "Banca Múltiple y G-7")) +
+  labs(
+    title = "Rentabilidad de los Activos",
+    x = "Fecha",
+    y = "ROA (flujo 12 meses)"
+  ) +
+  theme_classic() +
+  scale_x_continuous(
+    breaks = plot_breaks,   # Set the x-axis breaks to "time_monthly"
+    labels = plot_lbreaks  # Custom labels for x-axis
+  ) +
+  theme(
+    plot.title = element_text(hjust = 1),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+    legend.position = "none"
+  ) 
+
+```
+
+
+
+```{r, echo=FALSE, fig.width=12}
+#ICOR
+system_credit <- bank_data %>% 
+     select(bank_str, time_monthly, icor_cct)
+system_credit <- spread(system_credit, key = "bank_str", value = "icor_cct")
+
+#Defining quantiles for time-var
+plot_breaks <- floor(quantile(system_credit$time_monthly))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+#ICOR Plot
+icor <- ggplot(system_credit, aes(x = time_monthly)) +
+  geom_line(aes(y = `Total Banca Múltiple`, color ="Total"), lwd = 1.5) +
+  geom_line(aes(y = BBVA, color ="BBVA"), lwd = 0.5) +
+  geom_line(aes(y = Banorte, color ="Banorte"), lwd = 0.5) +
+  geom_line(aes(y = Santander, color ="Santander"), lwd = 0.5) +
+  geom_line(aes(y = Inbursa, color ="Inbursa"), lwd = 0.5) +
+  geom_line(aes(y = Citibanamex, color ="Citibanamex"), lwd = 0.5) +
+  geom_line(aes(y = Scotiabank , color ="Scotiabank"), lwd = 0.5) +
+  geom_line(aes(y = HSBC, color ="HSBC"), lwd = 0.5) +
+            scale_color_manual(values = c("Total" = "dodgerblue3",
+                               "BBVA" = pal_banks[7],
+                               "Banorte" = pal_banks[6],
+                               "Santander" = pal_banks[5],
+                               "Inbursa" = pal_banks[4],
+                               "Citibanamex" = pal_banks[3],
+                               "Scotiabank" = pal_banks[2],
+                               "HSBC" = pal_banks[1])
+                         ) +
+  guides(color = guide_legend(title = "Banca Múltiple y G-7")) +
+  labs(
+    title = "Índice de Cobertura",
+    x = "Fecha",
+    y = "ICOR"
+  ) +
+  theme_classic() +
+  scale_x_continuous(
+    breaks = plot_breaks,   # Set the x-axis breaks to "time_monthly"
+    labels = plot_lbreaks  # Custom labels for x-axis
+  ) +
+  theme(
+    plot.title = element_text(hjust = 1),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+    legend.position = "none"
+  ) 
+
+```
+
+
+```{r, echo=FALSE, fig.width=10}
+
+subplot(icap, icor, roa, liq, nrows = 2, titleY = T, margin = c(0.05)) %>% 
+     layout(title = 'Indicadores de Bancos')
+```
+
+
+# Indicadores adicionales
+
+## Captación {.tabset}
+
+### Sistema y G-7
+
+```{r, echo=FALSE, fig.width=10}
+
+#captación
+captation <- bank_data %>%
+     mutate(periodo = (floor(time_monthly / 12) + 1960) * 100 + time_monthly %% 12 + 1) %>% 
+     mutate(across(starts_with("cap_trad"), ~round(., digits = 3))) %>% 
+     mutate(across(starts_with("cap_trad"), ~ (./inpc*100)/ 1000)) %>% 
+     filter(periodo > 202200) %>% 
+     select(bank_str, cap_trad, time_monthly) %>% 
+     mutate(periodo = (floor(time_monthly / 12) + 1960) * 100 + time_monthly %% 12 + 1) %>% 
+     group_by(bank_str) %>% 
+     mutate(cap_trad_str = (cap_trad - mean(cap_trad, na.rm = T)) / sd(cap_trad, na.rm = T)) %>% 
+     ungroup()
+
+captation_long <- captation %>%
+     group_by(bank_str) %>% 
+     mutate(
+          ch1m = 100 *(cap_trad / lag(cap_trad, order_by = time_monthly) - 1),
+          ch12m = 100 *(cap_trad / lag(cap_trad, n = 12, order_by = time_monthly) - 1)) %>% 
+     mutate_if(is.numeric, ~ round(., 3))
+
+capt_long_system <- captation_long %>% 
+     filter(bank_str %in% c("Total Banca Múltiple"))
+capt_long_g7 <- captation_long %>% 
+     filter(bank_str %in% c("BBVA", "Banorte", "Santander", "Inbursa", "Citibanamex", "Scotiabank", "HSBC", "Azteca"))
+capt_long_oth <- captation_long %>% 
+     filter(bank_str != "Total Banca Múltiple")
+
+
+bcolors = c("#00754F", "#FF0020", "#01447F", "#056CAE", "#E12523", "#002F5D", "#EC0000", "#EF0702" )
+cap_trad_p <- plot_ly(data = capt_long_system, x = ~time_monthly, y = ~cap_trad_str,
+                      name = 'Sistema', type = 'scatter', mode = 'lines', line = list(width = 4), colors = bcolors,
+                      text = ~paste("Periodo:", periodo,"\nCaptación en mmdp reales:", cap_trad,
+                                    "\nAumento mensual:", ch1m, "\nAumento anual:", ch12m), hoverinfo = 'text+name') %>% 
+     add_trace(data = capt_long_g7, x = ~time_monthly, y = ~cap_trad_str, color = ~bank_str, mode = 'lines', line = list(width = 1),
+               text = ~paste("Periodo:", periodo,"\nCaptación en mmdp reales:", cap_trad, 
+                             "\nAumento mensual:", ch1m, "\nAumento anual:", ch12m), name = ~bank_str, hoverinfo = 'text+name') %>%
+     layout(title = "Captación tradicional y el G-7 \n Valores normalizados por efecto de visualización (en tabla muestra el real)",
+            xaxis = list(title = "Fecha",
+                         tickmode = "array",
+                         tickvals = plot_breaks,
+                         ticktext = plot_lbreaks
+            ),
+            yaxis = list(title = "Captación tradicional. Valores normalizados")
+     )
+cap_trad_p
+
+```
+
+
+### Todos los bancos
+```{r, echo=FALSE, fig.width=10}
+
+bcolors = c(brewer.pal(9, "Blues"))
+cap_trad_p <- plot_ly(data = capt_long_system, x = ~time_monthly, y = ~cap_trad_str,
+                      name = 'Sistema', type = 'scatter', mode = 'lines', line = list(width = 4), colors = bcolors,
+                      text = ~paste("Periodo:", periodo,"\nCaptación en mmdp reales:", cap_trad,
+                                    "\nAumento mensual:", ch1m, "\nAumento anual:", ch12m), hoverinfo = 'text+name') %>% 
+     add_trace(data = capt_long_oth, x = ~time_monthly, y = ~cap_trad_str, color = ~bank_str, mode = 'lines', line = list(width = 1),
+               text = ~paste("Periodo:", periodo,"\nCaptación en mmdp reales:", cap_trad, 
+                             "\nAumento mensual:", ch1m, "\nAumento anual:", ch12m), name = ~bank_str, hoverinfo = 'text+name') %>%
+     layout(title = "Captación tradicional y el G-7 \n Valores normalizados por efecto de visualización (en tabla muestra el real)",
+            xaxis = list(title = "Fecha",
+                         tickmode = "array",
+                         tickvals = plot_breaks,
+                         ticktext = plot_lbreaks
+            ),
+            yaxis = list(title = "Captación tradicional. Valores normalizados")
+     )
+cap_trad_p
+
+
+```
+
+
+
+### Valores
+```{r, echo=FALSE, fig.width=10}
+captation_long_x <- captation_long %>% 
+     filter(periodo >= 202301) %>% 
+     select(bank_str, periodo, cap_trad, cap_trad, ch1m, ch12m) %>% 
+     arrange( desc(periodo),-desc(bank_str))
+datatable(captation_long_x,
+          caption = "Captación y cambios en Captación. Billones de pesos y porciento",
+               rownames = F,
+               colnames = c("Banco", "Periodo", "Captación (mmdp reales)",
+                            "Incremento mensual del Banco", "Incremento Anual del Banco"),
+          filter = "top",
+          extensions = 'Buttons',
+          options = list(dom='Bfrtip',
+               buttons=c('copy', 'csv', 'excel', 'print', 'pdf'))) %>% 
+formatRound(columns = c(3:5), digits = 4)
+
+
+```
+
+
+
+## Distribución del crédito al consumo, por sexo
+
+```{r, echo=FALSE, fig.width=12}
+#Share to females
+sh_to_fem_data <- read_dta("//Statadgef/darmacro/CNR/CNR/[X]CNR_sh_to_fem.dta")
+sh_to_fem_data <- sh_to_fem_data %>% 
+     mutate(time_monthly = monthly_date)
+
+#Share to females
+sh_to_fem_data_consol <- read_dta("//Statadgef/darmacro/CNR/CNR/[X]CNR_sh_to_fem_consol.dta")
+sh_to_fem_data_consol <- sh_to_fem_data_consol %>% 
+     mutate(time_monthly = monthly_date)
+
+#Defining quantiles for time-var
+plot_breaks <- floor(quantile(system_credit$time_monthly))
+plot_lbreaks = paste0(floor(plot_breaks / 12) + 1960, "m", plot_breaks %% 12 + 1, sep = "")
+
+
+#SharesPlot
+shfem <- ggplot(sh_to_fem_data, aes(x = time_monthly)) +
+  geom_line(aes(y = sh_to_fem1, color ="Nómina"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem2, color ="Personal"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem3, color ="ABCD"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem4, color ="Automotriz"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem6, color ="Otros"), lwd = 0.5) +
+  guides(color = guide_legend(title = "Porcentaje")) +
+  labs(
+    title = "Proporción de crédito a mujeres",
+    x = "Fecha",
+    y = "Porcentaje de crédito a mujeres de Banca Múltiple"
+  ) +
+  theme_classic() +
+  scale_x_continuous(
+    breaks = plot_breaks,   # Set the x-axis breaks to "time_monthly"
+    labels = plot_lbreaks  # Custom labels for x-axis
+  ) +
+  theme(
+    plot.title = element_text(hjust = 1),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+  ) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "black") 
+
+#SharesPlot
+shfemconsol <- ggplot(sh_to_fem_data_consol, aes(x = time_monthly)) +
+  geom_line(aes(y = sh_to_fem1, color ="Nómina Consolidado"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem2, color ="Personal Consolidado"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem3, color ="ABCD Consolidado"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem4, color ="Automotriz Consolidado"), lwd = 0.5) +
+  geom_line(aes(y = sh_to_fem6, color ="Otros Consolidado"), lwd = 0.5) +
+  guides(color = guide_legend(title = "Porcentaje")) +
+  labs(
+    title = "Banca Consolidada",
+    x = "Fecha",
+    y = "Porcentaje de crédito a mujeres de Banca Múltiple"
+  ) +
+  theme_classic() +
+  scale_x_continuous(
+    breaks = plot_breaks,   # Set the x-axis breaks to "time_monthly"
+    labels = plot_lbreaks  # Custom labels for x-axis
+  ) +
+  theme(
+    plot.title = element_text(hjust = 1),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+  ) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "black") 
+
+subplot(shfem, shfemconsol) %>% 
+  layout(title = 'Proporción de crédito a mujeres')
+
+```
+
+
+#### Notas finales
+De acuerdo con los Boletines Estadísticos de la CNBV, la cartera de Crédito al Consumo Total
+
+i) Tarjetas de Crédito,
+
+ii) nómina, 
+
+iii) personales,
+
+iv) ABCD (o también Adquisición de bienes muebles); 
+ 
+v) automotriz; vi) microcréditos, y; 
+
+vii) otros tipos de créditos; 
+
+viii) Op. de arrendamiento financiero. De este no hay información desagregada, solo significa el 0.00752% de la cartera, y únicamente Banregio y Ve por Más tienen saldos de este tipo de crédito.
+
+
+---
+#### Logs
+
+version 0.8
+
+Añade gráficos estandadirizados para su mejor visualización
+
+Corrije errores:
+
+No se mostraba de manera correcta los saldos ni la captación en los gráficos de barras.
+
+version 0.7
+
+Añade pestañas-
+
+version 0.6
+
+Añade captación
+Modifica los colores de las gráficas en bancos para usar los colores representativos de cada banco-
+
+updated `r date()`
